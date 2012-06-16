@@ -17,6 +17,18 @@
 (defn ignore-protocol-version [version]
   (reset! protocol-version version))
 
+(def read-loop-exception-handler
+  (atom
+   (fn [e]
+     (.println System/err "exception in read loop")
+     (.printStackTrace e))))
+
+(def control-loop-exception-handler
+  (atom
+   (fn [e]
+     (.println System/err "exception in control loop")
+     (.printStackTrace e))))
+
 (defn- connection-serve [conn]
   (let [#^Thread control
         (dothread-swank
@@ -25,8 +37,7 @@
            (control-loop conn)
            (catch Exception e
              (when-not @shutting-down?
-               (.println System/err "exception in control loop")
-               (.printStackTrace e))
+               (@control-loop-exception-handler e))
              nil))
           (close-socket! (conn :socket)))
         read
@@ -37,8 +48,7 @@
            (catch Exception e
              ;; This could be put somewhere better
              (when-not @shutting-down?
-               (.println System/err "exception in read loop")
-               (.printStackTrace e)
+               (@read-loop-exception-handler e)
                (.interrupt control)
                (dosync (alter connections (partial remove #{conn})))))))]
     (dosync
@@ -65,6 +75,10 @@
         (reset! exit-on-quit? (:exit-on-quit opts true))
         (when (:load-cdt-on-startup opts)
           (load-cdt-with-dynamic-classloader))
+        (when-let [handler (:read-loop-exception-handler opts)]
+          (reset! read-loop-exception-handler handler))
+        (when-let [handler (:control-loop-exception-handler opts)]
+          (reset! control-loop-exception-handler handler))
         (reset! current-server
                 (setup-server (get opts :port 0)
                               simple-announce
